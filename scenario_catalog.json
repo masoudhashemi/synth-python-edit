@@ -1,0 +1,62 @@
+[
+  {
+    "domain": "Computational Physics",
+    "topic": "Orbital mechanics simulation",
+    "subtopic": "Symplectic integration for n-body systems"
+  },
+  {
+    "domain": "Applied Mathematics",
+    "topic": "Partial differential equations",
+    "subtopic": "Finite difference solver for heat diffusion"
+  },
+  {
+    "domain": "Quantitative Finance",
+    "topic": "Derivatives pricing",
+    "subtopic": "Monte Carlo valuation of barrier options"
+  },
+  {
+    "domain": "Robotics",
+    "topic": "Manipulator kinematics",
+    "subtopic": "Jacobian-based trajectory planning"
+  },
+  {
+    "domain": "Astrophysics",
+    "topic": "Light curve analysis",
+    "subtopic": "Transit depth estimation for exoplanets"
+  },
+  {
+    "domain": "Computational Biology",
+    "topic": "Gene regulatory networks",
+    "subtopic": "Steady-state analysis via linear algebra"
+  },
+  {
+    "domain": "Signal Processing",
+    "topic": "Spectral analysis",
+    "subtopic": "Windowed FFT anomaly detection"
+  },
+  {
+    "domain": "Control Systems",
+    "topic": "State estimation",
+    "subtopic": "Kalman filtering for sensor fusion"
+  },
+  {
+    "domain": "Operations Research",
+    "topic": "Network optimisation",
+    "subtopic": "Minimum cost flow with capacity constraints"
+  },
+  {
+    "domain": "Materials Science",
+    "topic": "Crystal lattice simulation",
+    "subtopic": "Stress tensor aggregation"
+  },
+  {
+    "domain": "Climate Science",
+    "topic": "Atmospheric modelling",
+    "subtopic": "Radiative forcing aggregation"
+  },
+  {
+    "domain": "Computational Neuroscience",
+    "topic": "Spike train analysis",
+    "subtopic": "Firing rate adaptation metrics"
+  }
+]
