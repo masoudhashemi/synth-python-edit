@@ -192,10 +192,12 @@ class DebugConversationPipeline:
         llm: Optional[LLMGenerator] = None,
         catalog: Optional[ScenarioCatalog] = None,
         bug_injector: Optional["BugInjector"] = None,
+        num_llm_candidates: int = 1,  # Control initial LLM candidates for efficiency
     ) -> None:
         self._llm = llm or LiteLLMGenerator()
         self._catalog = catalog or ScenarioCatalog(DEFAULT_CATALOG_PATH)
         self._bug_injector = bug_injector or _default_bug_injector()
+        self._num_llm_candidates = num_llm_candidates
         logger.info("Initialized DebugConversationPipeline")
 
     def generate(self, seed: Optional[ScenarioSeed] = None) -> DebugConversation:
@@ -207,45 +209,53 @@ class DebugConversationPipeline:
         logger.info(f"Acquired seed: {seed.domain} - {seed.topic} - {seed.subtopic}")
 
         try:
-            # Step 1: Generate and validate the specification
-            logger.info("Generating spec from LLM")
-            spec = self._llm.generate_spec(seed)
-            logger.info("Validating spec against seed")
-            self._validate_spec_against_seed(spec, seed)
-            runner_code = _build_test_runner()
+            max_retries = 3
+            for attempt in range(max_retries):
+                logger.info(f"Generating spec from LLM (attempt {attempt + 1})")
+                spec = self._llm.generate_spec(seed)
+                logger.info("Validating spec against seed")
+                self._validate_spec_against_seed(spec, seed)
+                runner_code = _build_test_runner()
 
-            with tempfile.TemporaryDirectory() as tmpdir:
-                module_path = Path(tmpdir, f"{spec.module_name}.py")
-                tests_path = Path(tmpdir, f"test_{spec.module_name}.py")
-                runner_path = Path(tmpdir, "run_tests.py")
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    module_path = Path(tmpdir, f"{spec.module_name}.py")
+                    tests_path = Path(tmpdir, f"test_{spec.module_name}.py")
+                    runner_path = Path(tmpdir, "run_tests.py")
 
-                logger.info("Writing correct code and tests to temp files")
-                module_path.write_text(spec.correct_code, encoding="utf-8")
-                tests_path.write_text(spec.unit_tests, encoding="utf-8")
-                runner_path.write_text(runner_code, encoding="utf-8")
+                    logger.info("Writing correct code and tests to temp files")
+                    module_path.write_text(spec.correct_code, encoding="utf-8")
+                    tests_path.write_text(spec.unit_tests, encoding="utf-8")
+                    runner_path.write_text(runner_code, encoding="utf-8")
 
-                # Step 2: Verify correct code passes all tests
-                logger.info("Running tests on correct code")
-                pass_result = _run_tests(tmpdir)
-                if pass_result.returncode != 0:
-                    logger.error("Correct code failed tests")
-                    raise RuntimeError(
-                        "Correct code failed its own tests."
-                        f"\nstdout:\n{pass_result.stdout}\n"
-                        f"stderr:\n{pass_result.stderr}"
+                    # Step 2: Verify correct code passes all tests
+                    logger.info("Running tests on correct code")
+                    pass_result = _run_tests(tmpdir)
+                    if pass_result.returncode != 0:
+                        logger.error("Correct code failed tests")
+                        error_msg = (
+                            "Correct code failed its own tests."
+                            f"\nstdout:\n{pass_result.stdout}\n"
+                            f"stderr:\n{pass_result.stderr}"
+                        )
+                        if attempt < max_retries - 1:
+                            logger.warning(f"Attempt {attempt + 1} failed. Retrying...")
+                            continue
+                        else:
+                            raise RuntimeError(error_msg)
+                    logger.info("Correct code passed all tests")
+
+                    # Step 3: Inject meaningful bug and ensure it creates debugging challenge
+                    logger.info("Starting bug injection")
+                    buggy_code, failing_output = self._inject_bug_and_capture(
+                        seed=seed,
+                        spec=spec,
+                        tmpdir=tmpdir,
+                        module_path=module_path,
                     )
-                logger.info("Correct code passed all tests")
-
-                # Step 3: Inject meaningful bug and ensure it creates debugging challenge
-                logger.info("Starting bug injection")
-                buggy_code, failing_output = self._inject_bug_and_capture(
-                    seed=seed,
-                    spec=spec,
-                    tmpdir=tmpdir,
-                    module_path=module_path,
-                )
-                logger.info("Bug injection successful")
-
+                    logger.info("Bug injection successful")
+                    break
+            else:
+                raise RuntimeError(f"Failed to generate valid spec after {max_retries} attempts")
             result = DebugConversation(
                 domain=seed.domain,
                 topic=seed.topic,
@@ -477,37 +487,63 @@ class DebugConversationPipeline:
         """Inject a meaningful bug that creates a non-trivial debugging challenge."""
         logger.info("Generating bug candidates")
         original_code = spec.correct_code
-        candidates = self._bug_injector.generate_candidates(
+        candidate_generator = self._bug_injector.generate_candidates(
             correct_code=original_code,
             spec=spec,
             seed=seed,
+            num_llm_candidates=self._num_llm_candidates,
         )
 
-        all_candidates = []
-        for candidate in candidates:
-            if candidate.strip() == original_code.strip():
-                continue
-            all_candidates.append(candidate)
+        def find_meaningful_bug(candidate: str, depth: int = 0, max_depth: int = 2) -> Optional[tuple[str, str]]:
+            if depth > max_depth:
+                return None
 
-        logger.info(f"Evaluating {len(all_candidates)} bug candidates")
-        for idx, candidate in enumerate(all_candidates, 1):
-            logger.info(f"Testing candidate {idx}/{len(all_candidates)}")
             module_path.write_text(candidate, encoding="utf-8")
             fail_result = _run_tests(tmpdir)
+            module_path.write_text(original_code, encoding="utf-8")  # Always restore
 
             if fail_result.returncode != 0:
                 failing_output = (fail_result.stdout + fail_result.stderr).strip()
-
-                # Evaluate if this is a meaningful bug
                 if self._is_meaningful_bug(failing_output, spec):
-                    logger.info("Found meaningful bug")
                     return candidate, failing_output
-                else:
-                    logger.warning("Candidate bug was not meaningful, trying next")
 
+                # If not meaningful, try to complicate
+                if hasattr(self._bug_injector, '_llm_strategy') and self._bug_injector._llm_strategy:
+                    complicated = self._bug_injector._llm_strategy.mutate(
+                        correct_code=candidate,
+                        spec=spec,
+                        seed=seed,
+                    )
+                    if complicated and complicated != candidate:
+                        result = find_meaningful_bug(complicated, depth + 1, max_depth)
+                        if result:
+                            return result
+
+            return None
+
+        first_failing = None
+        evaluated = 0
+        for candidate in candidate_generator:
+            if candidate.strip() == original_code.strip():
+                continue
+            evaluated += 1
+            logger.info(f"Testing candidate {evaluated}")
+            result = find_meaningful_bug(candidate)
+            if result:
+                logger.info("Found meaningful bug")
+                return result
+            # Track first failing for fallback
+            module_path.write_text(candidate, encoding="utf-8")
+            fail_result = _run_tests(tmpdir)
             module_path.write_text(original_code, encoding="utf-8")
+            if fail_result.returncode != 0 and first_failing is None:
+                first_failing = (candidate, (fail_result.stdout + fail_result.stderr).strip())
 
-        raise RuntimeError("Bug injection strategies failed to produce a meaningful failing implementation.")
+        if first_failing:
+            logger.warning("No meaningful bug found; falling back to first failing candidate")
+            return first_failing
+
+        raise RuntimeError("Bug injection strategies failed to produce any failing implementation.")
 
     def _is_meaningful_bug(self, failing_output: str, spec: GeneratedSpec) -> bool:
         """Determine if a test failure represents a meaningful debugging challenge."""
@@ -519,17 +555,18 @@ class DebugConversationPipeline:
 
         for line in lines:
             line = line.strip()
-            if line.startswith('FAILED') or 'FAILED' in line:
+            if line.startswith('FAIL') or 'FAIL' in line:  # Broader matching for failures
                 failure_count += 1
             if line.startswith('ERROR') or 'ERROR' in line:
                 error_count += 1
             # Extract error types
-            for etype in ['AssertionError', 'RuntimeError', 'RecursionError', 'IndexError', 'ValueError']:
+            for etype in ['AssertionError', 'RuntimeError', 'RecursionError', 'IndexError', 'ValueError', 'TypeError']:
                 if etype in line:
                     error_types.add(etype)
 
         total_failures = failure_count + error_count
-        total_tests = len(spec.unit_tests.split('def test_')) - 1  # Approximate test count
+        total_tests_approx = len(spec.unit_tests.split('def test_')) - 1  # Approximate test count
+        logger.debug(f"Bug evaluation: failures={total_failures}, errors={error_count}, types={error_types}, approx_tests={total_tests_approx}")
 
         if total_failures == 0:
             logger.debug("Rejected: No failures")
@@ -538,32 +575,20 @@ class DebugConversationPipeline:
         # Avoid obvious/easy bugs
         obvious_patterns = [
             'SyntaxError', 'IndentationError', 'ImportError', 'ModuleNotFoundError',
-            'NameError', 'TypeError'  # Add TypeError as often too obvious
+            'NameError'  # Removed TypeError to allow more
         ]
         for pattern in obvious_patterns:
             if pattern in failing_output:
                 logger.debug(f"Rejected: Contains obvious pattern {pattern}")
                 return False
 
-        # For combined bugs: Allow up to 75% failures, but at least 2
-        max_allowed_failures = max(2, int(total_tests * 0.75))
-        if total_failures > max_allowed_failures or total_failures == total_tests:
-            logger.debug(f"Rejected: Too many failures ({total_failures}/{total_tests})")
-            return False
-        if total_failures < 2:
-            logger.debug(f"Rejected: Too few failures ({total_failures})")
-            return False
+        # Relaxed: Allow if 1+ failures, not all tests fail, and at least one interesting error
+        if 0 < total_failures < total_tests_approx and (len(error_types) > 0 or total_failures >= 1):
+            logger.debug("Accepted: Meets relaxed meaningful criteria")
+            return True
 
-        # Prefer diverse error types for challenge
-        has_multiple_types = len(error_types) >= 2
-        has_assertion = 'AssertionError' in error_types
-        has_runtime_issue = any(e in error_types for e in ['RuntimeError', 'RecursionError', 'IndexError'])
-
-        is_meaningful = (has_assertion and has_runtime_issue) or has_multiple_types or total_failures >= 3
-        if not is_meaningful:
-            logger.debug(f"Rejected: Not challenging enough (errors: {error_types}, failures: {total_failures})")
-        
-        return is_meaningful
+        logger.debug(f"Rejected: Does not meet criteria (failures={total_failures}/{total_tests_approx}, types={error_types})")
+        return False
 
     def _build_conversation(
         self,
@@ -669,12 +694,13 @@ class CompositeBugInjector:
         correct_code: str,
         spec: GeneratedSpec,
         seed: ScenarioSeed,
+        num_llm_candidates: int = 1,
     ) -> Iterable[str]:
         seen: set[str] = set()
         
         # Always start with LLM-based combined bugs
         if self._llm_strategy:
-            for _ in range(3):  # Generate multiple LLM candidates
+            for _ in range(num_llm_candidates):
                 candidate = self._llm_strategy.mutate(
                     correct_code=correct_code,
                     spec=spec,
@@ -684,7 +710,7 @@ class CompositeBugInjector:
                     seen.add(candidate.strip())
                     yield candidate
         
-        # Optionally add rule-based for fallback, but combine with LLM outputs
+        # Optionally add rule-based for fallback, without random LLM combination
         for strategy in self._strategies:
             if isinstance(strategy, LLMBugInjectionStrategy):
                 continue  # Already handled
@@ -695,19 +721,21 @@ class CompositeBugInjector:
                     seed=seed,
                 )
                 if candidate:
-                    # Combine with a random LLM mutation for challenge
-                    if self._llm_strategy and random.random() > 0.5:
-                        combined = self._llm_strategy.mutate(
-                            correct_code=candidate,  # Chain mutations
-                            spec=spec,
-                            seed=seed,
-                        )
-                        if combined:
-                            candidate = combined
                     normalized = candidate.strip()
                     if normalized not in seen:
                         seen.add(normalized)
                         yield candidate
+                    
+                    # Add mixed: Combine with LLM mutation for variety
+                    if self._llm_strategy:
+                        mixed = self._llm_strategy.mutate(
+                            correct_code=candidate,
+                            spec=spec,
+                            seed=seed,
+                        )
+                        if mixed and mixed.strip() not in seen:
+                            seen.add(mixed.strip())
+                            yield mixed
             except Exception:
                 continue
 
@@ -751,11 +779,12 @@ class LLMBugInjectionStrategy:
         *,
         model: Optional[str] = None,
         temperature: float = 1.0,
-        max_attempts: int = 3,
+        max_attempts: int = 2,
     ) -> None:
-        self._model = model or "gpt-4o-mini"
+        self._model = model or os.environ.get("LITELLM_MODEL", "gpt-4o-mini")
         self._temperature = temperature
         self._max_attempts = max_attempts
+        self._cache: Dict[str, Optional[str]] = {}  # Cache by input hash
 
     SYSTEM_PROMPT = (
         "You are an expert Python debugger specializing in injecting realistic, challenging bugs into scientific code. "
@@ -768,6 +797,7 @@ class LLMBugInjectionStrategy:
         "- Domain-specific formula perturbations (e.g., slight changes to scientific constants or equations). "
         "- Recursion/loop depth issues (e.g., wrong base cases leading to infinite recursion). "
         "Ensure bugs are plausible developer mistakes, cause partial test failures, and are challenging but fixable. "
+        "Do not add any new comments explaining the bugs or changes. Preserve all original comments from the correct code unless the bug specifically requires modifying them. "
         "Respond ONLY with the mutated code."
     )
 
@@ -789,6 +819,11 @@ class LLMBugInjectionStrategy:
         spec: GeneratedSpec,
         seed: ScenarioSeed,
     ) -> Optional[str]:
+        import hashlib
+        cache_key = hashlib.md5(correct_code.encode()).hexdigest()
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
         user_prompt = self.USER_PROMPT_TEMPLATE.format(
             domain=seed.domain,
             topic=seed.topic,
@@ -809,9 +844,11 @@ class LLMBugInjectionStrategy:
                 )
                 candidate = completion.choices[0].message.content.strip()
                 if candidate and candidate != correct_code:
+                    self._cache[cache_key] = candidate
                     return candidate
             except Exception:
                 continue
+        self._cache[cache_key] = None
         return None
 
 

@@ -1,0 +1,45 @@
+{
+  "buggy_code": "def factorial(n):\n    # input validation (logical operator swapped: should be 'or')\n    if not isinstance(n, int) and n < 0:\n        raise TypeError(\"n must be a non-negative integer\")\n    # incorrect base case (off-by-one: misses n == 0)\n    if n == 1:\n        return 1\n    # domain-specific perturbation: steps by 2 instead of 1\n    return n * factorial(n - 2)",
+  "code_diff": "--- correct.py\n+++ buggy.py\n@@ -1,5 +1,9 @@\n def factorial(n):\n-    result = 1\n-    for i in range(1, n + 1):\n-        result *= i\n-    return result+    # input validation (logical operator swapped: should be 'or')\n+    if not isinstance(n, int) and n < 0:\n+        raise TypeError(\"n must be a non-negative integer\")\n+    # incorrect base case (off-by-one: misses n == 0)\n+    if n == 1:\n+        return 1\n+    # domain-specific perturbation: steps by 2 instead of 1\n+    return n * factorial(n - 2)",
+  "conversation": [
+    {
+      "content": "Domain: Mathematics | Topic: Recursion | Subtopic: Factorials\nImplement a Python function that computes the factorial of a non-negative integer.",
+      "role": "architect"
+    },
+    {
+      "content": "Solution strategy:\nUse recursive calls with base case for 0.",
+      "role": "planner"
+    },
+    {
+      "content": "Correct implementation (`math_utils.py`):\n```python\ndef factorial(n):\n    result = 1\n    for i in range(1, n + 1):\n        result *= i\n    return result\n```",
+      "role": "developer"
+    },
+    {
+      "content": "Validation assets for the feature:\nUnit tests:\n```python\nimport unittest\nfrom math_utils import factorial\n\nclass TestFactorial(unittest.TestCase):\n    def test_case_1(self):\n        self.assertEqual(factorial(0), 1)\n    def test_case_2(self):\n        self.assertEqual(factorial(1), 1)\n    def test_case_3(self):\n        self.assertEqual(factorial(5), 120)\n    def test_case_4(self):\n        self.assertEqual(factorial(3), 6)\n```\nTest runner:\n```python\nimport sys\nimport unittest\n\n\ndef main() -> int:\n    suite = unittest.defaultTestLoader.discover(\".\", pattern=\"test_*.py\")\n    result = unittest.TextTestRunner(verbosity=2).run(suite)\n    return 0 if result.wasSuccessful() else 1\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n```",
+      "role": "qa"
+    },
+    {
+      "content": "Injected defect version:\n```python\ndef factorial(n):\n    # input validation (logical operator swapped: should be 'or')\n    if not isinstance(n, int) and n < 0:\n        raise TypeError(\"n must be a non-negative integer\")\n    # incorrect base case (off-by-one: misses n == 0)\n    if n == 1:\n        return 1\n    # domain-specific perturbation: steps by 2 instead of 1\n    return n * factorial(n - 2)\n```",
+      "role": "developer"
+    },
+    {
+      "content": "Test suite failure trace:\n```\ntest_case_1 (test_math_utils.TestFactorial.test_case_1) ... ERROR\ntest_case_2 (test_math_utils.TestFactorial.test_case_2) ... ok\ntest_case_3 (test_math_utils.TestFactorial.test_case_3) ... FAIL\ntest_case_4 (test_math_utils.TestFactorial.test_case_4) ... FAIL\n\n======================================================================\nERROR: test_case_1 (test_math_utils.TestFactorial.test_case_1)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/private/var/folders/zp/bbktq6x94hz_t85nvqs8b4w00000gn/T/tmpeb00ys3v/test_math_utils.py\", line 6, in test_case_1\n    self.assertEqual(factorial(0), 1)\n                     ^^^^^^^^^^^^\n  File \"/private/var/folders/zp/bbktq6x94hz_t85nvqs8b4w00000gn/T/tmpeb00ys3v/math_utils.py\", line 9, in factorial\n    return n * factorial(n - 2)\n               ^^^^^^^^^^^^^^^^\n  File \"/private/var/folders/zp/bbktq6x94hz_t85nvqs8b4w00000gn/T/tmpeb00ys3v/math_utils.py\", line 9, in factorial\n    return n * factorial(n - 2)\n               ^^^^^^^^^^^^^^^^\n  File \"/private/var/folders/zp/bbktq6x94hz_t85nvqs8b4w00000gn/T/tmpeb00ys3v/math_utils.py\", line 9, in factorial\n    return n * factorial(n - 2)\n               ^^^^^^^^^^^^^^^^\n  [Previous line repeated 980 more times]\nRecursionError: maximum recursion depth exceeded\n\n======================================================================\nFAIL: test_case_3 (test_math_utils.TestFactorial.test_case_3)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/private/var/folders/zp/bbktq6x94hz_t85nvqs8b4w00000gn/T/tmpeb00ys3v/test_math_utils.py\", line 10, in test_case_3\n    self.assertEqual(factorial(5), 120)\nAssertionError: 15 != 120\n\n======================================================================\nFAIL: test_case_4 (test_math_utils.TestFactorial.test_case_4)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/private/var/folders/zp/bbktq6x94hz_t85nvqs8b4w00000gn/T/tmpeb00ys3v/test_math_utils.py\", line 12, in test_case_4\n    self.assertEqual(factorial(3), 6)\nAssertionError: 3 != 6\n\n----------------------------------------------------------------------\nRan 4 tests in 0.007s\n\nFAILED (failures=2, errors=1)\n```",
+      "role": "qa"
+    },
+    {
+      "content": "Restored the original implementation so all unit tests pass again.",
+      "role": "developer"
+    }
+  ],
+  "correct_code": "def factorial(n):\n    result = 1\n    for i in range(1, n + 1):\n        result *= i\n    return result",
+  "domain": "Mathematics",
+  "failing_output": "test_case_1 (test_math_utils.TestFactorial.test_case_1) ... ERROR\ntest_case_2 (test_math_utils.TestFactorial.test_case_2) ... ok\ntest_case_3 (test_math_utils.TestFactorial.test_case_3) ... FAIL\ntest_case_4 (test_math_utils.TestFactorial.test_case_4) ... FAIL\n\n======================================================================\nERROR: test_case_1 (test_math_utils.TestFactorial.test_case_1)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/private/var/folders/zp/bbktq6x94hz_t85nvqs8b4w00000gn/T/tmpeb00ys3v/test_math_utils.py\", line 6, in test_case_1\n    self.assertEqual(factorial(0), 1)\n                     ^^^^^^^^^^^^\n  File \"/private/var/folders/zp/bbktq6x94hz_t85nvqs8b4w00000gn/T/tmpeb00ys3v/math_utils.py\", line 9, in factorial\n    return n * factorial(n - 2)\n               ^^^^^^^^^^^^^^^^\n  File \"/private/var/folders/zp/bbktq6x94hz_t85nvqs8b4w00000gn/T/tmpeb00ys3v/math_utils.py\", line 9, in factorial\n    return n * factorial(n - 2)\n               ^^^^^^^^^^^^^^^^\n  File \"/private/var/folders/zp/bbktq6x94hz_t85nvqs8b4w00000gn/T/tmpeb00ys3v/math_utils.py\", line 9, in factorial\n    return n * factorial(n - 2)\n               ^^^^^^^^^^^^^^^^\n  [Previous line repeated 980 more times]\nRecursionError: maximum recursion depth exceeded\n\n======================================================================\nFAIL: test_case_3 (test_math_utils.TestFactorial.test_case_3)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/private/var/folders/zp/bbktq6x94hz_t85nvqs8b4w00000gn/T/tmpeb00ys3v/test_math_utils.py\", line 10, in test_case_3\n    self.assertEqual(factorial(5), 120)\nAssertionError: 15 != 120\n\n======================================================================\nFAIL: test_case_4 (test_math_utils.TestFactorial.test_case_4)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/private/var/folders/zp/bbktq6x94hz_t85nvqs8b4w00000gn/T/tmpeb00ys3v/test_math_utils.py\", line 12, in test_case_4\n    self.assertEqual(factorial(3), 6)\nAssertionError: 3 != 6\n\n----------------------------------------------------------------------\nRan 4 tests in 0.007s\n\nFAILED (failures=2, errors=1)",
+  "module_name": "math_utils",
+  "problem_description": "Implement a Python function that computes the factorial of a non-negative integer.",
+  "runner_code": "import sys\nimport unittest\n\n\ndef main() -> int:\n    suite = unittest.defaultTestLoader.discover(\".\", pattern=\"test_*.py\")\n    result = unittest.TextTestRunner(verbosity=2).run(suite)\n    return 0 if result.wasSuccessful() else 1\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
+  "solution_outline": "Use recursive calls with base case for 0.",
+  "subtopic": "Factorials",
+  "summary": "Debug factorial function using examples",
+  "topic": "Recursion",
+  "unit_tests": "import unittest\nfrom math_utils import factorial\n\nclass TestFactorial(unittest.TestCase):\n    def test_case_1(self):\n        self.assertEqual(factorial(0), 1)\n    def test_case_2(self):\n        self.assertEqual(factorial(1), 1)\n    def test_case_3(self):\n        self.assertEqual(factorial(5), 120)\n    def test_case_4(self):\n        self.assertEqual(factorial(3), 6)\n"
+}
