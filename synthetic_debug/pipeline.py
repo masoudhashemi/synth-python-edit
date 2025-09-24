@@ -964,6 +964,7 @@ class LLMBugInjectionStrategy:
         "- Data structure misuses (e.g., list instead of set, mutations on immutables). "
         "- Domain-specific formula perturbations (e.g., slight changes to scientific constants or equations). "
         "- Recursion/loop depth issues (e.g., wrong base cases leading to infinite recursion). "
+        "- Structural syntax issues such as missing parentheses or malformed JSON literals to trigger parser failures. "
         "Ensure bugs are plausible developer mistakes, cause partial test failures, and are challenging but fixable. "
         "Do not add any new comments explaining the bugs or changes. Preserve all original comments from the correct code unless the bug specifically requires modifying them. "
         "Respond ONLY with the mutated code."

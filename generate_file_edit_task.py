@@ -66,6 +66,11 @@ def parse_args() -> argparse.Namespace:
         help="Initial filename; will be coerced to <module_name>.py (default: placeholder.py).",
     )
     parser.add_argument(
+        "--unique-subdir",
+        action="store_true",
+        help="Create a unique timestamped subdirectory under --dir for this run.",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=None,
@@ -92,9 +97,13 @@ def strip_buggy_code(conversation_json: str) -> str:
 def main() -> int:
     args = parse_args()
 
-    args.dir.mkdir(parents=True, exist_ok=True)
+    base_dir = args.dir
+    if args.unique_subdir:
+        ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+        base_dir = base_dir / f"task_{ts}"
+    base_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
-    target = args.dir / args.filename
+    target = base_dir / args.filename
 
     catalog = ScenarioCatalog(
         args.catalog,
@@ -115,7 +124,7 @@ def main() -> int:
 
     if args.output is None:
         out_name = f"conversation_{timestamp}_file_edit.json"
-        out_path = args.dir / out_name
+        out_path = base_dir / out_name
     else:
         out_path = args.output
 

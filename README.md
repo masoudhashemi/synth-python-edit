@@ -104,3 +104,28 @@ convo = pipeline.generate_file_edit_task(bug_file_path=Path("/tmp/debug_task/pla
 
 print(convo.bug_file_path)  # Absolute path to the buggy module on disk
 ```
+
+### Batch file-edit generation (parallel)
+
+Generate multiple file-edit tasks at once. Each sample is placed in its own uniquely named directory derived from the module/topic and a content hash. Runs in parallel by default.
+
+```bash
+python3 generate_file_edit_batch.py \
+  --count 10 \
+  --output file_edit_tasks \
+  --prefix sample \
+  --suppress-buggy-code
+```
+
+Options of interest:
+
+- `--workers N`: control parallelism (defaults to CPU count)
+- `--catalog`, `--state`, `--catalog-seed`: control scenario selection
+- `--model`, `--temperature`, `--max-attempts`: control LLM generation
+
+Each generated directory contains:
+
+- `<module_name>.py`: buggy module to fix
+- `test_<module_name>.py`: unit tests
+- `run_tests.py`: runner
+- `conversation.json`: conversation referencing absolute paths and failing output
