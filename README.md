@@ -64,3 +64,43 @@ The JSON payload contains:
 - A dedicated bug-injection stage: after validating the clean build, the pipeline applies multiple strategies (LLM-provided variants, AST operator inversions, numeric perturbations) and only accepts a mutant once the tests demonstrably fail
 
 Each run produces a brand-new scenario because the LLM invents the domain, topic, and code on the fly.
+
+## File-edit debugging tasks (buggy code only on disk)
+
+In addition to embedding the buggy implementation inside the conversation JSON, the pipeline supports a file-edit workflow where only the buggy code is written to a real file on disk. The conversation then instructs the developer/agent to open that file, inspect the included failing unittest output, and fix the file content in place until all tests pass.
+
+### Generate a file-edit task via CLI
+
+```bash
+python3 generate_file_edit_task.py \
+  --dir file_edit_tasks \
+  --filename placeholder.py \
+  --suppress-buggy-code
+```
+
+This creates three files under `file_edit_tasks/`:
+
+- `<module_name>.py`: the buggy module to edit and fix
+- `test_<module_name>.py`: the unit tests
+- `run_tests.py`: the test runner
+
+It also writes a conversation JSON (path printed at the end) that references these absolute paths and includes the failing test output, but does not inline the buggy code.
+
+To run tests locally while fixing the file:
+
+```bash
+cd file_edit_tasks
+python3 run_tests.py
+```
+
+### Programmatic API
+
+```python
+from pathlib import Path
+from synthetic_debug.pipeline import DebugConversationPipeline
+
+pipeline = DebugConversationPipeline()
+convo = pipeline.generate_file_edit_task(bug_file_path=Path("/tmp/debug_task/placeholder.py"))
+
+print(convo.bug_file_path)  # Absolute path to the buggy module on disk
+```

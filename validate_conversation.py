@@ -65,7 +65,8 @@ def main() -> int:
             overall_exit = 1
             continue
 
-        if args.skip_buggy:
+        # Skip buggy run if requested or if buggy_code was not present
+        if args.skip_buggy or not (conversation.buggy_code and conversation.buggy_code.strip()):
             continue
 
         buggy_result = run_tests_for_variant(conversation, "buggy")

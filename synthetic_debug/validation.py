@@ -22,10 +22,18 @@ def load_conversation(path: Path) -> DebugConversation:
     """Load a conversation JSON file into a DebugConversation instance."""
 
     payload = json.loads(path.read_text(encoding="utf-8"))
+    # Gracefully allow missing buggy_code for file-edit tasks
+    if "buggy_code" not in payload:
+        payload["buggy_code"] = ""
     try:
         return DebugConversation(**payload)
     except TypeError as exc:
-        raise ValidationError(f"Invalid conversation payload in {path}: {exc}") from exc
+        # Attempt last-ditch recovery if buggy_code is still problematic
+        payload.setdefault("buggy_code", "")
+        try:
+            return DebugConversation(**payload)
+        except Exception:
+            raise ValidationError(f"Invalid conversation payload in {path}: {exc}") from exc
 
 
 def extract_code_artifacts(conversation: DebugConversation, destination: Path) -> None:
@@ -36,10 +44,11 @@ def extract_code_artifacts(conversation: DebugConversation, destination: Path) -
         conversation.correct_code,
         encoding="utf-8",
     )
-    (destination / f"{conversation.module_name}_buggy.py").write_text(
-        conversation.buggy_code,
-        encoding="utf-8",
-    )
+    if conversation.buggy_code.strip():
+        (destination / f"{conversation.module_name}_buggy.py").write_text(
+            conversation.buggy_code,
+            encoding="utf-8",
+        )
     (destination / f"test_{conversation.module_name}.py").write_text(
         conversation.unit_tests,
         encoding="utf-8",

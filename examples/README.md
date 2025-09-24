@@ -61,3 +61,21 @@ The `example_data` dictionary for each script must follow specific formats. Belo
 - **subtopic** (optional, str, default: "Debugging"): The subtopic category.
 - **summary** (optional, str, default: "Debugging task based on assertion functions"): A brief summary.
 - **solution_outline** (optional, str, default: ""): Outline of the solution approach.
+
+### Case 3: File-Edit Task (programmatic API)
+
+You can also create a task where the buggy code is written to disk and the conversation instructs the agent to open and edit that file in-place:
+
+```python
+from pathlib import Path
+from synthetic_debug.pipeline import DebugConversationPipeline
+
+pipeline = DebugConversationPipeline()
+
+# Choose any path; the filename will be coerced to <module_name>.py to match tests
+target = Path("/tmp/debug_task/placeholder.py")
+conversation = pipeline.generate_file_edit_task(bug_file_path=target)
+
+print("Bug file:", conversation.bug_file_path)
+# The directory also contains test_<module_name>.py and run_tests.py
+```

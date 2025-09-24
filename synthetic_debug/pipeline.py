@@ -64,6 +64,10 @@ class DebugConversation:
     runner_code: str
     failing_output: str
     conversation: List[Dict[str, str]]
+    # Optional: when the buggy code is materialised to a real file for a file-edit task
+    bug_file_path: Optional[str] = None
+    # Optional: unified diff between correct and buggy code, included in JSON payloads
+    code_diff: Optional[str] = None
 
     def to_json(self) -> str:
         correct_lines = self.correct_code.splitlines(keepends=True)
@@ -92,6 +96,7 @@ class DebugConversation:
                 "failing_output": self.failing_output,
                 "conversation": self.conversation,
                 "code_diff": code_diff,
+                "bug_file_path": self.bug_file_path,
             },
             indent=2,
             sort_keys=True,
@@ -476,6 +481,112 @@ class DebugConversationPipeline:
         )
         return result
 
+    def generate_file_edit_task(
+        self,
+        *,
+        bug_file_path: Path,
+        seed: Optional[ScenarioSeed] = None,
+    ) -> DebugConversation:
+        """Generate a debugging conversation where the buggy code lives on disk.
+
+        The buggy implementation, unit tests, and the runner are written to the
+        provided directory. The conversation instructs the developer/LLM to open
+        the file at `bug_file_path`, investigate, and fix it in-place.
+        """
+        logger.info("Starting file-edit task generation")
+
+        if seed is None:
+            seed = self._catalog.acquire()
+        logger.info(f"Acquired seed: {seed.domain} - {seed.topic} - {seed.subtopic}")
+
+        # Produce a validated spec and a meaningful buggy variant using temp isolation
+        max_retries = 3
+        for attempt in range(max_retries):
+            logger.info(f"Generating spec from LLM (attempt {attempt + 1})")
+            spec = self._llm.generate_spec(seed)
+            logger.info("Validating spec against seed")
+            self._validate_spec_against_seed(spec, seed)
+            runner_code = _build_test_runner()
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                module_path = Path(tmpdir, f"{spec.module_name}.py")
+                tests_path = Path(tmpdir, f"test_{spec.module_name}.py")
+                runner_path = Path(tmpdir, "run_tests.py")
+
+                logger.info("Writing correct code and tests to temp files")
+                module_path.write_text(spec.correct_code, encoding="utf-8")
+                tests_path.write_text(spec.unit_tests, encoding="utf-8")
+                runner_path.write_text(runner_code, encoding="utf-8")
+
+                logger.info("Running tests on correct code")
+                pass_result = _run_tests(tmpdir)
+                if pass_result.returncode != 0:
+                    logger.error("Correct code failed tests in file-edit generation")
+                    if attempt < max_retries - 1:
+                        logger.warning(f"Attempt {attempt + 1} failed. Retrying...")
+                        continue
+                    raise RuntimeError(
+                        "Correct code failed its own tests for file-edit task."
+                    )
+
+                logger.info("Injecting bug and capturing failing output")
+                buggy_code, failing_output = self._inject_bug_and_capture(
+                    seed=seed,
+                    spec=spec,
+                    tmpdir=tmpdir,
+                    module_path=module_path,
+                )
+                logger.info("Bug injection successful for file-edit task")
+
+            # After the temp session, materialise artefacts to the requested location
+            target_dir = bug_file_path.parent
+            target_dir.mkdir(parents=True, exist_ok=True)
+
+            # Ensure filename aligns with module_name.py to satisfy imports in tests
+            desired_name = f"{spec.module_name}.py"
+            if bug_file_path.name != desired_name:
+                bug_file_path = target_dir / desired_name
+
+            bug_file_path.write_text(buggy_code, encoding="utf-8")
+            tests_on_disk = target_dir / f"test_{spec.module_name}.py"
+            runner_on_disk = target_dir / "run_tests.py"
+            tests_on_disk.write_text(spec.unit_tests, encoding="utf-8")
+            runner_on_disk.write_text(runner_code, encoding="utf-8")
+
+            conversation = self._build_file_edit_conversation(
+                seed=seed,
+                problem_description=spec.problem_description,
+                solution_outline=spec.solution_outline,
+                module_name=spec.module_name,
+                failing_output=failing_output,
+                bug_file_path=bug_file_path,
+                tests_path=tests_on_disk,
+                runner_path=runner_on_disk,
+            )
+
+            result = DebugConversation(
+                domain=seed.domain,
+                topic=seed.topic,
+                subtopic=seed.subtopic,
+                summary=spec.summary,
+                problem_description=spec.problem_description,
+                solution_outline=spec.solution_outline,
+                module_name=spec.module_name,
+                correct_code=spec.correct_code,
+                buggy_code=buggy_code,
+                unit_tests=spec.unit_tests,
+                runner_code=runner_code,
+                failing_output=failing_output,
+                conversation=conversation,
+                bug_file_path=str(bug_file_path),
+            )
+
+            self._catalog.mark_used(seed)
+            logger.info("File-edit conversation generated successfully and seed marked used")
+            return result
+
+        raise RuntimeError("Failed to generate valid file-edit task after retries")
+
     def _inject_bug_and_capture(
         self,
         *,
@@ -637,6 +748,63 @@ class DebugConversationPipeline:
             {
                 "role": "developer",
                 "content": "Restored the original implementation so all unit tests pass again.",
+            },
+        ]
+
+    def _build_file_edit_conversation(
+        self,
+        *,
+        seed: ScenarioSeed,
+        problem_description: str,
+        solution_outline: str,
+        module_name: str,
+        failing_output: str,
+        bug_file_path: Path,
+        tests_path: Path,
+        runner_path: Path,
+    ) -> List[Dict[str, str]]:
+        """Conversation variant that instructs editing a real file on disk.
+
+        This variant avoids inlining the buggy source and instead references the
+        absolute file paths where the artefacts have been materialised. The task
+        for the developer/LLM is to open and modify the file in-place until the
+        tests pass.
+        """
+        logger.info("Building file-edit conversation structure")
+        return [
+            {
+                "role": "architect",
+                "content": (
+                    f"Domain: {seed.domain} | Topic: {seed.topic} | Subtopic: {seed.subtopic}\n"
+                    f"{problem_description}"
+                ),
+            },
+            {
+                "role": "planner",
+                "content": f"Solution strategy:\n{solution_outline.strip()}",
+            },
+            {
+                "role": "qa",
+                "content": (
+                    "Debugging task setup (file-based):\n"
+                    f"- Buggy module path: {str(bug_file_path)}\n"
+                    f"- Unit tests path: {str(tests_path)}\n"
+                    f"- Test runner path: {str(runner_path)}\n\n"
+                    "Open the buggy module, run the tests using the runner, and edit the file in-place until all tests pass."
+                ),
+            },
+            {
+                "role": "qa",
+                "content": f"""Current failing test output (for reference):\n```
+{failing_output}
+```""",
+            },
+            {
+                "role": "developer",
+                "content": (
+                    "I have opened the specified file, investigated the failures, and applied fixes. "
+                    "Re-running the test suite now passes locally."
+                ),
             },
         ]
 
